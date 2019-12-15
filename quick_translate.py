@@ -2,8 +2,6 @@
 import os
 from os.path import abspath
 from googletrans import Translator
-import re
-import shutil
 import win32com.client as win32
 import xlrd
 import pptx
