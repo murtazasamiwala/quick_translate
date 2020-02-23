@@ -6,8 +6,27 @@ import win32com.client as win32
 import xlrd
 import pptx
 import csv
+import sys
+from google.oauth2 import service_account
+from google.cloud import translate_v2 as translate
 base_path = os.path.dirname(abspath('__file__'))
 allowed_ext = ['doc', 'docx', 'rtf', 'xls', 'xlsx', 'pptx', 'txt', 'csv']
+if 'dont_delete_ignore' not in os.listdir(base_path):
+    os.mkdir('dont_delete_ignore')
+    kmsg_1 = 'Key not found.\n'
+    kmsg_2 = 'Key folder has been created.\nSave key file to this folder.'
+    fkmsg = kmsg_1 + kmsg_2
+    result = open('script_result.txt', 'w', encoding='utf8')
+    result.write(fkmsg)
+    result.close()
+    sys.exit()
+if 'results_dir' not in os.listdir(base_path):
+    os.mkdir('results_dir')
+results_path = base_path + '\\' + 'results_dir'
+key_folder = base_path + '\\' + 'dont_delete_ignore'
+key_path = key_folder + '\\' + os.listdir(key_folder)[0]
+credentials = service_account.Credentials.from_service_account_file(
+    key_path, scopes=["https://www.googleapis.com/auth/cloud-platform"])
 
 
 def extract_text(fname, path=base_path):
@@ -73,7 +92,7 @@ def doc_split(doc):
     temp_list = []
     final = []
     for i in range(len(tokens)):
-        if len_counter + len(tokens[i]) + len(temp_list) - 1 < 1800:
+        if len_counter + len(tokens[i]) + len(temp_list) - 1 < 7000:
             len_counter = len_counter + len(tokens[i])
             temp_list.append(tokens[i])
         else:
@@ -86,27 +105,28 @@ def doc_split(doc):
     return final
 
 
-def translate_text(src_list):
-    """Translate text given as list of strings."""
-    google_output = []
-    for i in src_list:
-        try:
-            translator = Translator()
-            google_output.append(translator.translate(i, dest='en').text)
-        except ValueError:
-            return None
-    translated = ' '.join(google_output)
-    return translated
+def translate_text(src_list, fname):
+    """Check if text is already tranlsated. If not, translate it."""
+    gt_list = []
+    gt_out = None
+    if fname.split('.')[0] + '.docx' in os.listdir(results_path):
+        return
+    if gt_out is None:
+        for i in src_list:
+            translate_client = translate.Client(credentials=credentials)
+            result = translate_client.translate(i, target_language='en')
+            gt_list.append(result['translatedText'])
+        gt_out = ' '.join(gt_list)
+    return gt_out
 
 
 def save_files(gt_text, name):
     """Save translated text in separate folder as txt file."""
-    if 'translations_dir' not in os.listdir(base_path):
-        os.mkdir('translations_dir')
-    save_dir = base_path + '\\' + 'translations_dir' + '\\' + 'translated_'
-    txt_file = open(save_dir + '{}.txt'.format(name), 'w', encoding='utf8')
-    txt_file.write(gt_text)
-    txt_file.close()
+    word = win32.Dispatch('Word.Application')
+    document = word.Documents.Add()
+    document.Content.Text = gt_text
+    document.SaveAs(results_path + '\\' + name.split('.')[0])
+    document.Close(False)
     return
 
 
@@ -138,7 +158,7 @@ def folder_run(path=base_path):
         elif i.split('.')[-1] in allowed_ext:
             src, file_name = extract_text(i)
             source_list = doc_split(src)
-            g_translated = translate_text(source_list)
+            g_translated = translate_text(source_list, file_name)
             if g_translated is not None:
                 save_files(g_translated, file_name)
                 report_file('success', file_name)
