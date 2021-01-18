@@ -1,7 +1,6 @@
 """Module to translate given set of documents"""
 import os
 from os.path import abspath
-from googletrans import Translator
 import win32com.client as win32
 import xlrd
 import pptx
@@ -24,6 +23,7 @@ if 'results_dir' not in os.listdir(base_path):
     os.mkdir('results_dir')
 results_path = base_path + '\\' + 'results_dir'
 key_folder = base_path + '\\' + 'dont_delete_ignore'
+ignored_fol = ['result_dir', 'dont_delete_ignore']
 key_path = key_folder + '\\' + os.listdir(key_folder)[0]
 credentials = service_account.Credentials.from_service_account_file(
     key_path, scopes=["https://www.googleapis.com/auth/cloud-platform"])
@@ -32,7 +32,7 @@ credentials = service_account.Credentials.from_service_account_file(
 def extract_text(fname, path=base_path):
     """Extract text from given document."""
     if fname.split('.')[-1] in ['doc', 'docx', 'rtf']:
-        word = win32.Dispatch('Word.Application')
+        word = win32.gencache.EnsureDispatch('Word.Application')
         doc = word.Documents.Open(path+'\\'+fname)
         txt = doc.Content.Text
         doc.Close(False)
@@ -74,49 +74,15 @@ def extract_text(fname, path=base_path):
     return txt, fname
 
 
-def doc_split(doc):
-    """Split text into small chunks readable by google translate."""
-    translator = Translator()
-    lan = translator.detect(doc[:1000]).lang
-    if lan in ['ko', 'pt']:
-        tokens = doc.split('.')
-        tokens = [i + '.' for i in tokens]
-    elif lan in ['ja', 'zh-CN', 'zh-TW']:
-        tokens = doc.split('。')
-        tokens = [i + '。' for i in tokens]
-    else:
-        tokens = doc.split('.')
-        tokens = [i + '.' for i in tokens]
-    split = []
-    len_counter = 0
-    temp_list = []
-    final = []
-    for i in range(len(tokens)):
-        if len_counter + len(tokens[i]) + len(temp_list) - 1 < 7000:
-            len_counter = len_counter + len(tokens[i])
-            temp_list.append(tokens[i])
-        else:
-            len_counter = len(tokens[i])
-            split.append(temp_list)
-            temp_list = []
-            temp_list.append(tokens[i])
-    split.append(temp_list)
-    final = [''.join(i) for i in split]
-    return final
-
-
-def translate_text(src_list, fname):
+def translate_text(doc, fname):
     """Check if text is already tranlsated. If not, translate it."""
-    gt_list = []
     gt_out = None
-    if fname.split('.')[0] + '.docx' in os.listdir(results_path):
-        return
     if gt_out is None:
-        for i in src_list:
-            translate_client = translate.Client(credentials=credentials)
-            result = translate_client.translate(i, target_language='en')
-            gt_list.append(result['translatedText'])
-        gt_out = ' '.join(gt_list)
+        split_doc = [doc[:4000], doc[4000:]]
+        translate_client = translate.Client(credentials=credentials)
+        result = translate_client.translate(split_doc[0], target_language='en')
+        split_doc[0] = result['translatedText']
+        gt_out = ' '.join(split_doc)
     return gt_out
 
 
@@ -141,6 +107,8 @@ def report_file(outcome, fname):
         msg_1 = 'ERROR in translating {}. '.format(fname)
         instruc = 'Cut paste the text into same doc and try again.'
         msg = msg_1 + instruc
+    elif outcome == 'already':
+        msg = '{} is already translated. Check results folder'.format(fname)
     report = open('report_file.txt', 'a', encoding='utf')
     report.write(msg + '\n')
     report.close()
@@ -151,19 +119,23 @@ def report_file(outcome, fname):
 def folder_run(path=base_path):
     """Run script over all allowed files in folder."""
     for i in os.listdir(path):
-        if (os.path.isdir(i)) | (i.endswith('zip')):
+        if i.endswith('zip'):
             pass
         elif i == 'report_file.txt':
             pass
+        elif i in ignored_fol:
+            pass
         elif i.split('.')[-1] in allowed_ext:
-            src, file_name = extract_text(i)
-            source_list = doc_split(src)
-            g_translated = translate_text(source_list, file_name)
-            if g_translated is not None:
-                save_files(g_translated, file_name)
-                report_file('success', file_name)
+            src, trans_name = extract_text(i)
+            if i.split('.')[0] + '.docx' in os.listdir(results_path):
+                report_file('already', trans_name)
             else:
-                report_file('error', file_name)
+                g_translated = translate_text(src, trans_name)
+                if g_translated is not None:
+                    save_files(g_translated, trans_name)
+                    report_file('success', trans_name)
+                else:
+                    report_file('error', trans_name)
         else:
             pass
     return
